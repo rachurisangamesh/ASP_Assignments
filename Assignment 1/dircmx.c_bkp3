@@ -1,0 +1,229 @@
+/*
+
+   ******************************
+   *                            *
+   *   Author: Akshay Kumar     *
+   *   Student ID: 110090317    *
+   *                            *
+   ******************************
+
+*/
+
+#include <ftw.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <limits.h>
+
+#define BUFSIZE 1024
+
+char **extension_list;
+int argCount;
+char *source;
+char *destination;
+char *option;
+
+// concatenate two strings
+char* concatStrings(char *str1, char *str2) {
+  size_t len1 = strlen(str1);
+  size_t len2 = strlen(str2);
+
+  char *result = malloc(len1 + len2 + 1);
+  memcpy(result, str1, len1);
+  memcpy(result + len1, str2, len2 + 1);
+  return result;
+}
+
+// return the index of first occurence of `element` in string `str`
+int getIndexFirstOccurence(char *str, char element) {
+  // iterate through all the characters of string and return the index of first match
+  for (int i = 0; i < strlen(str); i++) {
+    if (str[i] == element) {
+      return i;
+    }
+  }
+  return -1;
+
+}
+
+// return the index of last occurence of `element` in string `str`
+int getIndexLastOccurence(char *str, char element) {
+  int index = -1;
+  for (int i = 0; i < strlen(str); i++) {
+    if (str[i] == element) {
+      index = i;
+    }
+  }
+  return index;
+}
+
+// get souce directory to copy or move
+char* getSource(char *s) {
+    if (s[0] == '/' || s[0] == '.') {
+    int len = strlen(s);
+    int i = 0;
+    for (i = len-2; i >= 0; i--) {
+      if (s[i] == '/') {
+        i--;
+        break;
+      }
+    }
+    s += i+2;
+    return s;
+  }
+  return s;
+}
+
+//given the souce file, it will return the path where the source file should be copied or moved
+char* getDest(char *s, char *d) {
+  // getting absolute path
+  char buf[PATH_MAX];;
+  char *res = realpath(s, buf);
+
+  return concatStrings(d, s);;
+}
+
+// given the source file path and destination file path, it will copy the content of source file to the destination file location
+int copy_file(const char *src, const char *dst) {
+  int source, destination, read_size;
+  char buf[BUFSIZE];
+
+  // Open source file in read-only mode
+  source = open(src, O_RDONLY);
+  if (source == -1) {
+    printf("Unable to open source file %s\n", src);
+    return 1;
+  }
+
+  // Open destination file in write-only mode, creating it if it doesn't exist
+  destination = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (destination == -1) {
+    printf("Unable to open destination file %s\n", dst);
+    close(source);
+    return 1;
+  }
+
+  // Copy contents of source file to destination file
+  while ((read_size = read(source, buf, BUFSIZE)) > 0) {
+    write(destination, buf, read_size);
+  }
+
+  // Close both files
+  close(source);
+  close(destination);
+
+  return 0;
+}
+
+// given the source and destination file path, this function will perform the move/copy operation
+int performOperation(char *source, char *dest, int typeflag) {
+  if (dest == NULL) {
+    return 0;
+  }
+
+  // move file/folder
+  if (strcmp (option, "-mv") == 0) {
+    rename(source, dest);
+  } else {
+     //copy operation
+     switch (typeflag) {
+       case FTW_F:
+         // copy file
+         return copy_file(source, dest);
+       case FTW_D:
+         // Create destination directory
+         mkdir(dest, 0755);
+	 return 0;
+       default:
+         printf("Skipping entry %s\n", source);
+	 return 0;
+     }
+  }
+  return 0;
+}
+
+// callback function to be called for each file or directory traversed 
+int ntfw_cb(const char *fpath, const struct stat *sb, int typeflag,
+            struct FTW *ftwbuf) {
+  char *temp = destination;
+  char *dest = getDest(fpath, temp);
+  
+  if (typeflag == FTW_D) {
+    return performOperation(fpath, dest, typeflag);
+  } else if (extension_list != NULL) {
+    int sourceStrLen = strlen(fpath);
+    int extLen = 0;
+    // iterating over extension list
+    for (int i = 0; i < argCount - 4; i++) {
+	    extLen = strlen(extension_list[i]);
+	    int cmp = sourceStrLen > extLen && strcmp(fpath + sourceStrLen - extLen, extension_list[i]);
+      // in case file extension matches to the extension user input
+	    if (cmp == 0) {
+	      return performOperation(fpath, dest, typeflag);
+	    }
+    }  
+  } else {
+    // file -> when no extensions are provided by user when calling the program
+    return performOperation(fpath, dest, typeflag);
+  }
+  return 0;
+}
+
+
+// main function
+int main(int argc, char *argv[]) {
+  // initializing global variables with arguments
+  argCount = argc;
+  destination = argv[2];
+  option = argv[3];
+  source = getSource(argv[1]);
+
+  // in case of invalid arguments
+  if (argc > 10 || argc < 4) {
+    printf("Usage: dircmx [source_dir] [destination_dir] [options] <extension list>\n");
+    return 1;
+  }
+
+  if (strcmp(option, "-cp") != 0 && strcmp(option, "-mv") != 0) {
+    printf("Invalid option\n");
+    printf("Usage: dircmx [source_dir] [destination_dir] [options] <extension list>\n");
+    exit(0);
+  }
+
+  if (argc > 4) {
+    extension_list = (char **) malloc((argc - 4) * sizeof(char *));
+    for (int i = 4; i < argc; i++ ) {
+	    extension_list[i - 4] = (char *) malloc(sizeof(char) * strlen(argv[i]) + 1);
+	    strcpy(extension_list[i-4], argv[i]);
+    }
+  } else {
+    // in case no extension were mentioned
+    extension_list = NULL;
+  }
+  
+  //append '/' after the source and destination path
+  int sourceIdx = getIndexLastOccurence(source, '/');
+  if (sourceIdx != strlen(source)-1) {
+    source = concatStrings(source, "/");
+  }
+
+  int destIdx = getIndexLastOccurence(destination, '/');
+  if (destIdx != strlen(destination)-1) {
+    destination = concatStrings(destination, "/");
+  }
+
+  // create destination directory
+  mkdir(destination, 0755);
+
+  // traverse down the source file path
+  nftw(source, ntfw_cb, 100, FTW_NS);
+  
+  // remove the source directory in case of move operation
+  if (strcmp(option, "-mv") == 0) {
+    remove(source);
+  }
+  return 0;
+}
